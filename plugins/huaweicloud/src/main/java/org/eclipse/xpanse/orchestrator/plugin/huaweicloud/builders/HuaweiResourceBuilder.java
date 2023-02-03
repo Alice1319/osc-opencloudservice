@@ -6,9 +6,12 @@
 
 package org.eclipse.xpanse.orchestrator.plugin.huaweicloud.builders;
 
+import java.util.List;
 import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.eclipse.xpanse.modules.ocl.loader.data.models.Artifact;
+import org.eclipse.xpanse.modules.ocl.loader.data.models.BaseImage;
 import org.eclipse.xpanse.modules.ocl.loader.data.models.Ocl;
 import org.eclipse.xpanse.orchestrator.plugin.huaweicloud.AtomBuilder;
 import org.eclipse.xpanse.orchestrator.plugin.huaweicloud.BuilderContext;
@@ -37,21 +40,21 @@ public class HuaweiResourceBuilder extends AtomBuilder {
             log.error("BuilderContext is invalid.");
             throw new BuilderException(this, "Builder context is null.");
         }
-        Map<String, String> imageCtx = ctx.get(new HuaweiImageBuilder(ocl).name());
+
         Map<String, String> envCtx = ctx.get(new HuaweiEnvBuilder(ocl).name());
         if (envCtx == null) {
             log.error("Dependent builder: {} must build first.", new HuaweiEnvBuilder(ocl).name());
             throw new BuilderException(this, "HuaweiEnvBuilder context is null.");
         }
-        if (imageCtx == null) {
-            log.error("Dependent builder: {} must build first.",
-                    new HuaweiImageBuilder(ocl).name());
-            throw new BuilderException(this, "HuaweiImageBuilder context is null.");
-        }
 
         for (Artifact artifact : ocl.getImage().getArtifacts()) {
-            if (imageCtx.containsKey(artifact.getName())) {
-                artifact.setId(imageCtx.get(artifact.getName()));
+            List<BaseImage> baseList = ocl.getImage().getBase();
+            for (BaseImage image : baseList) {
+                String id = image.getFilters().getId();
+                if (StringUtils.isNoneBlank(id)) {
+                    artifact.setId(id);
+                    break;
+                }
             }
         }
 
@@ -79,7 +82,7 @@ public class HuaweiResourceBuilder extends AtomBuilder {
     public boolean destroy(BuilderContext ctx) {
         log.info("Destroying Huawei Cloud resources.");
         OclTerraformExecutor tfExecutor = new OclTerraformExecutor(ocl,
-                ctx.get(new HuaweiEnvBuilder(ocl).name()));
+            ctx.get(new HuaweiEnvBuilder(ocl).name()));
 
         tfExecutor.createWorkspace();
         tfExecutor.createTerraformScript();

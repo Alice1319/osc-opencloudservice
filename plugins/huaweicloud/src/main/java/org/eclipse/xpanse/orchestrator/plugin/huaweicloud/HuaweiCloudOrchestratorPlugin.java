@@ -39,7 +39,7 @@ public class HuaweiCloudOrchestratorPlugin implements OrchestratorPlugin {
 
     @Autowired
     public HuaweiCloudOrchestratorPlugin(Environment environment,
-                                         OrchestratorStorage orchestratorStorage) {
+        OrchestratorStorage orchestratorStorage) {
         this.environment = environment;
         this.orchestratorStorage = orchestratorStorage;
     }
@@ -51,6 +51,12 @@ public class HuaweiCloudOrchestratorPlugin implements OrchestratorPlugin {
             throw new IllegalArgumentException("registering invalid ocl. ocl = null");
         }
         managedOcl.put(ocl.getName(), ocl);
+        OclResources oclResources = getOclResources(ocl.getName());
+        if (oclResources.getState().equals("success")) {
+            log.info("Managed service {} already in active.", ocl.getName());
+        }
+        oclResources.setState("registered");
+        storeOclResources(ocl.getName(), oclResources);
     }
 
     @Override
@@ -74,33 +80,28 @@ public class HuaweiCloudOrchestratorPlugin implements OrchestratorPlugin {
             throw new IllegalStateException("Ocl object is null.");
         }
 
-        BuilderFactory factory = new BuilderFactory();
-        Optional<AtomBuilder> optionalAtomBuilder = factory.createBuilder(
-                BuilderFactory.BASIC_BUILDER, ocl);
-
-        BuilderContext ctx = new BuilderContext();
-        ctx.setEnvironment(this.environment);
-
-        if (optionalAtomBuilder.isEmpty()) {
-            throw new IllegalStateException("Builder not found.");
-        }
         OclResources oclResources = getOclResources(managedServiceName);
-        if (oclResources != null && oclResources.getState().equals("active")) {
+        if (oclResources != null && oclResources.getState().equals("success")) {
             log.info("Managed service {} already in active.", managedServiceName);
             return;
         }
+        BuilderContext ctx = new BuilderContext();
+        ctx.setEnvironment(this.environment);
+        ctx.setServiceName(managedServiceName);
+        String pluginName = HuaweiCloudOrchestratorPlugin.class.getSimpleName();
+        ctx.setPluginName(pluginName);
 
-        ctx.getOclResources().setState("building");
-        storeOclResources(managedServiceName, ctx.getOclResources());
+        BuilderFactory factory = new BuilderFactory();
+        AtomBuilder envBuilder = factory.createBuilder(BuilderFactory.ENV_BUILDER, ocl);
+        ctx.getBuilderMap().put(BuilderFactory.ENV_BUILDER, envBuilder);
 
-        try {
-            optionalAtomBuilder.get().build(ctx);
-        } catch (Exception ex) {
-            optionalAtomBuilder.get().rollback(ctx);
-            throw ex;
-        }
-        ctx.getOclResources().setState("active");
-        storeOclResources(managedServiceName, ctx.getOclResources());
+        AtomBuilder basicBuilder = factory.createBuilder(BuilderFactory.BASIC_BUILDER,
+            ocl);
+        ctx.getBuilderMap().put(BuilderFactory.BASIC_BUILDER, basicBuilder);
+
+        ctx.setStorage(this.orchestratorStorage);
+        envBuilder.build(ctx);
+        basicBuilder.build(ctx);
     }
 
     @Override
@@ -109,16 +110,22 @@ public class HuaweiCloudOrchestratorPlugin implements OrchestratorPlugin {
         if (!managedOcl.containsKey(managedServiceName)) {
             throw new IllegalArgumentException("Service:" + managedServiceName + "not registered.");
         }
-        Optional<AtomBuilder> optionalAtomBuilder = createBuilder(managedServiceName);
 
         BuilderContext ctx = new BuilderContext();
         ctx.setEnvironment(this.environment);
 
-        if (optionalAtomBuilder.isEmpty()) {
-            throw new IllegalStateException("Builder not found.");
+        Ocl ocl = managedOcl.get(managedServiceName).deepCopy();
+        if (ocl == null) {
+            throw new IllegalStateException("Ocl object is null.");
         }
-        optionalAtomBuilder.get().rollback(ctx);
 
+        BuilderFactory factory = new BuilderFactory();
+        AtomBuilder envBuilder = factory.createBuilder(BuilderFactory.ENV_BUILDER, ocl);
+        AtomBuilder basicBuilder = factory.createBuilder(BuilderFactory.BASIC_BUILDER,
+            ocl);
+        envBuilder.rollback(ctx);
+        basicBuilder.rollback(ctx);
+        ctx.getOclResources().setState("stopped");
         storeOclResources(managedServiceName, new OclResources());
     }
 
@@ -131,7 +138,7 @@ public class HuaweiCloudOrchestratorPlugin implements OrchestratorPlugin {
         managedOcl.remove(managedServiceName);
     }
 
-    private Optional<AtomBuilder> createBuilder(String managedServiceName) {
+    private AtomBuilder createBuilder(String managedServiceName) {
         Ocl ocl = managedOcl.get(managedServiceName).deepCopy();
         if (ocl == null) {
             throw new IllegalStateException("Ocl object is null.");
@@ -145,14 +152,14 @@ public class HuaweiCloudOrchestratorPlugin implements OrchestratorPlugin {
         String oclResourceStr;
         try {
             oclResourceStr = objectMapper.writerWithDefaultPrettyPrinter()
-                    .writeValueAsString(oclResources);
+                .writeValueAsString(oclResources);
         } catch (JsonProcessingException ex) {
             throw new IllegalStateException("Serial OCL object to json failed.", ex);
         }
 
         if (this.orchestratorStorage != null) {
             this.orchestratorStorage.store(managedServiceName,
-                    HuaweiCloudOrchestratorPlugin.class.getSimpleName(), "state", oclResourceStr);
+                HuaweiCloudOrchestratorPlugin.class.getSimpleName(), "state", oclResourceStr);
         } else {
             log.warn("storage is null.");
         }
@@ -161,20 +168,18 @@ public class HuaweiCloudOrchestratorPlugin implements OrchestratorPlugin {
     private OclResources getOclResources(String managedServiceName) {
         OclResources oclResources;
         String oclResourceStr;
-        if (this.orchestratorStorage != null) {
-            oclResourceStr = this.orchestratorStorage.getKey(managedServiceName,
-                    HuaweiCloudOrchestratorPlugin.class.getSimpleName(), "state");
-        } else {
-            return null;
-        }
-
         try {
-            oclResources = objectMapper.readValue(oclResourceStr, OclResources.class);
+            if (this.orchestratorStorage != null) {
+                oclResourceStr = this.orchestratorStorage.getKey(managedServiceName,
+                    HuaweiCloudOrchestratorPlugin.class.getSimpleName(), "state");
+                oclResources = objectMapper.readValue(oclResourceStr, OclResources.class);
+            } else {
+                oclResources = new OclResources();
+            }
         } catch (JsonProcessingException ex) {
             log.error("Serial OCL object to json failed.", ex);
             oclResources = new OclResources();
         }
-
         return oclResources;
     }
 }

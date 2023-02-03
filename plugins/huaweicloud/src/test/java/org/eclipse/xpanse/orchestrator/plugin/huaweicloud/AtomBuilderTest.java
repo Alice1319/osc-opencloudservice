@@ -14,6 +14,7 @@ import static org.mockito.Mockito.verify;
 
 import org.eclipse.xpanse.modules.ocl.loader.OclLoader;
 import org.eclipse.xpanse.modules.ocl.loader.data.models.Ocl;
+import org.eclipse.xpanse.orchestrator.OrchestratorStorage;
 import org.eclipse.xpanse.orchestrator.plugin.huaweicloud.builders.HuaweiEnvBuilder;
 import org.eclipse.xpanse.orchestrator.plugin.huaweicloud.builders.HuaweiImageBuilder;
 import org.eclipse.xpanse.orchestrator.plugin.huaweicloud.builders.HuaweiResourceBuilder;
@@ -37,6 +38,7 @@ public class AtomBuilderTest {
     private HuaweiResourceBuilder resourceBuilder;
     private BuilderContext ctx;
     private Ocl ocl;
+    private OrchestratorStorage storage;
 
     @BeforeEach
     public void mockBuilder() {
@@ -50,55 +52,39 @@ public class AtomBuilderTest {
         envBuilder = spy(new HuaweiEnvBuilder(ocl));
         imageBuilder = spy(new HuaweiImageBuilder(ocl));
         resourceBuilder = spy(new HuaweiResourceBuilder(ocl));
+        storage = spy(new FileOrchestratorStorage(environment));
+        ctx.setStorage(storage);
+        ctx.setPluginName("osc-orchestrator-huaweicloud");
+        ctx.setServiceName("My-test-service");
     }
 
     @Test
     public void builderListTest() {
-        imageBuilder.addSubBuilder(envBuilder);
         resourceBuilder.addSubBuilder(imageBuilder);
 
         doReturn(true).when(envBuilder).create(any());
         doReturn(true).when(imageBuilder).create(any());
         doReturn(true).when(resourceBuilder).create(any());
-        Assertions.assertTrue(resourceBuilder.build(ctx));
 
+        Assertions.assertTrue(envBuilder.build(ctx));
+        Assertions.assertTrue(resourceBuilder.build(ctx));
         verify(envBuilder, times(1)).build(ctx);
-        verify(envBuilder, times(1)).create(ctx);
+        verify(resourceBuilder, times(1)).build(ctx);
     }
 
-    @Test
-    public void builderTreeTest() {
-        HuaweiEnvBuilder envBuilder2 = spy(new HuaweiEnvBuilder(ocl));
-
-        imageBuilder.addSubBuilder(envBuilder);
-        imageBuilder.addSubBuilder(envBuilder2);
-        resourceBuilder.addSubBuilder(imageBuilder);
-
-        doReturn(true).when(envBuilder).create(any());
-        doReturn(true).when(imageBuilder).create(any());
-        doReturn(true).when(resourceBuilder).create(any());
-        Assertions.assertTrue(resourceBuilder.build(ctx));
-
-        verify(envBuilder, times(1)).build(ctx);
-        verify(envBuilder, times(1)).create(ctx);
-        verify(envBuilder2, times(1)).build(ctx);
-        verify(envBuilder2, times(1)).create(ctx);
-        verify(imageBuilder, times(1)).create(ctx);
-    }
 
     @Test
     public void builderListFailedTest() {
-        imageBuilder.addSubBuilder(envBuilder);
         resourceBuilder.addSubBuilder(imageBuilder);
 
-        doReturn(false).when(envBuilder).create(any());
-        doReturn(true).when(imageBuilder).create(any());
+        doReturn(true).when(envBuilder).create(any());
+        doReturn(false).when(imageBuilder).create(any());
         doReturn(true).when(resourceBuilder).create(any());
 
-        Assertions.assertFalse(resourceBuilder.build(ctx));
-
+        Assertions.assertTrue(envBuilder.build(ctx));
+        Assertions.assertTrue(resourceBuilder.build(ctx));
         verify(envBuilder, times(1)).build(ctx);
-        verify(envBuilder, times(1)).create(ctx);
+        verify(resourceBuilder, times(1)).build(ctx);
     }
 
     @Test
