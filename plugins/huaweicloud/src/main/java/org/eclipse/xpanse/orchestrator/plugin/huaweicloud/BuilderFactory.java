@@ -5,7 +5,6 @@
  */
 
 package org.eclipse.xpanse.orchestrator.plugin.huaweicloud;
-
 import org.eclipse.xpanse.modules.ocl.loader.data.models.Ocl;
 import org.eclipse.xpanse.orchestrator.plugin.huaweicloud.builders.HuaweiEnvBuilder;
 import org.eclipse.xpanse.orchestrator.plugin.huaweicloud.builders.HuaweiImageBuilder;
@@ -14,7 +13,6 @@ import org.eclipse.xpanse.orchestrator.plugin.huaweicloud.builders.HuaweiResourc
 /**
  * Factory class to instantiate builder object.
  */
-
 public class BuilderFactory {
 
     public static final String ENV_BUILDER = "env";
