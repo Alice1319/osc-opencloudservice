@@ -3,6 +3,7 @@ import React, {useState} from 'react';
 import { useNavigate } from 'react-router-dom';
 import {Link } from 'react-router-dom';
 import {homePageRoute} from '../../utils/constants';
+
 function LayoutSider(): JSX.Element {
   const [collapsed, setCollapsed] = useState(false);
   const navigate = useNavigate();
@@ -34,7 +35,6 @@ function LayoutSider(): JSX.Element {
         {key: "/middleware", label: "MiddleWare"},
         {key: "/ai", label: "AI"},
         {key: "/mediaservice", label: "MediaService"}
-        // {key: 12, label: "option12"}
       ]
     }
     ];
