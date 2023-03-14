@@ -27,7 +27,9 @@ import org.eclipse.xpanse.modules.models.enums.HealthStatus;
 import org.eclipse.xpanse.modules.models.query.RegisteredServiceQuery;
 import org.eclipse.xpanse.modules.models.resource.Ocl;
 import org.eclipse.xpanse.modules.models.service.CreateRequest;
+import org.eclipse.xpanse.modules.models.service.MonitorResource;
 import org.eclipse.xpanse.modules.models.view.CategoryOclVo;
+import org.eclipse.xpanse.modules.models.view.OclDetailVo;
 import org.eclipse.xpanse.modules.models.view.ServiceVo;
 import org.eclipse.xpanse.orchestrator.OrchestratorService;
 import org.eclipse.xpanse.orchestrator.register.RegisterService;
@@ -292,17 +294,15 @@ public class OrchestratorApi {
     @GetMapping(value = "/register/{id}",
             produces = MediaType.APPLICATION_JSON_VALUE)
     @ResponseStatus(HttpStatus.OK)
-    public Ocl detail(
+    public OclDetailVo detail(
             @Parameter(name = "id", description = "id of registered service")
             @PathVariable("id") String id) {
         log.info("Get detail of registered service with name {}.", id);
-        RegisterServiceEntity registerServiceEntity =
-                registerService.getRegisteredService(id);
+        OclDetailVo oclDetailVo = registerService.getRegisteredService(id);
         String successMsg = String.format(
-                "Get detail of registered service with name %s success.",
-                id);
+                "Get detail of registered service with name %s success.", id);
         log.info(successMsg);
-        return registerServiceEntity.getOcl();
+        return oclDetailVo;
     }
 
     /**
@@ -351,7 +351,7 @@ public class OrchestratorApi {
      * @return response
      */
     @Tag(name = "Service", description = "APIs to get monitor data")
-    @GetMapping(value = "/service/monitor/{id}",produces = MediaType.APPLICATION_JSON_VALUE)
+    @GetMapping(value = "/service/monitor/{id}", produces = MediaType.APPLICATION_JSON_VALUE)
     @ResponseStatus(HttpStatus.OK)
     public MonitorResource monitor(@PathVariable("id") UUID id,
             @Parameter(name = "fromTime", description = "the start time of the monitoring range")
@@ -408,6 +408,24 @@ public class OrchestratorApi {
         String successMsg = String.format(
                 "Task of stop managed service %s start running.", id);
         return Response.successResponse(successMsg);
+    }
+
+    /**
+     * Get openapi of registered service by id.
+     *
+     * @param id id of registered service.
+     * @return response
+     */
+    @Tag(name = "Service", description = "APIs to get openapi of service deploy context")
+    @GetMapping(value = "/service/openapi/{id}", produces = MediaType.APPLICATION_JSON_VALUE)
+    @ResponseStatus(HttpStatus.OK)
+    public String openApi(@PathVariable("id") String id) {
+        log.info("Get openapi url of registered service with id {}", id);
+        String apiUrl = this.orchestratorService.getOpenApiUrl(id);
+        String successMsg = String.format(
+                "Get openapi of registered service success with Url %s.", apiUrl);
+        log.info(successMsg);
+        return apiUrl;
     }
 
 }

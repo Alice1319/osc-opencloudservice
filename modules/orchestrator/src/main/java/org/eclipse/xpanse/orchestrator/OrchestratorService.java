@@ -21,17 +21,24 @@ import org.eclipse.xpanse.modules.database.service.DeployResourceEntity;
 import org.eclipse.xpanse.modules.database.service.DeployServiceEntity;
 import org.eclipse.xpanse.modules.deployment.Deployment;
 import org.eclipse.xpanse.modules.deployment.deployers.terraform.DeployTask;
+import org.eclipse.xpanse.modules.models.enums.Csp;
 import org.eclipse.xpanse.modules.models.enums.DeployerKind;
 import org.eclipse.xpanse.modules.models.enums.ServiceState;
+import org.eclipse.xpanse.modules.models.resource.DeployVariable;
 import org.eclipse.xpanse.modules.models.service.DeployResource;
 import org.eclipse.xpanse.modules.models.service.DeployResult;
+import org.eclipse.xpanse.modules.models.service.MonitorDataResponse;
+import org.eclipse.xpanse.modules.models.service.MonitorResource;
+import org.eclipse.xpanse.modules.models.utils.DeployVariableValidator;
 import org.eclipse.xpanse.modules.models.view.ServiceVo;
+import org.eclipse.xpanse.modules.monitor.Monitor;
 import org.eclipse.xpanse.orchestrator.register.RegisterServiceStorage;
 import org.eclipse.xpanse.orchestrator.service.DeployResourceStorage;
 import org.eclipse.xpanse.orchestrator.service.DeployServiceStorage;
 import org.slf4j.MDC;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationEvent;
 import org.springframework.context.ApplicationListener;
@@ -58,9 +65,11 @@ public class OrchestratorService implements ApplicationListener<ApplicationEvent
     private final DeployServiceStorage deployServiceStorage;
 
     private final DeployResourceStorage deployResourceStorage;
+
+    private final DeployVariableValidator deployVariableValidator;
+
     @Getter
     private final List<Deployment> deployers = new ArrayList<>();
-
     @Getter
     private final List<OrchestratorPlugin> plugins = new ArrayList<>();
     @Getter
@@ -71,10 +80,12 @@ public class OrchestratorService implements ApplicationListener<ApplicationEvent
     @Autowired
     OrchestratorService(RegisterServiceStorage registerServiceStorage,
             DeployServiceStorage deployServiceStorage,
-            DeployResourceStorage deployResourceStorage) {
+            DeployResourceStorage deployResourceStorage,
+            DeployVariableValidator deployVariableValidator) {
         this.registerServiceStorage = registerServiceStorage;
         this.deployServiceStorage = deployServiceStorage;
         this.deployResourceStorage = deployResourceStorage;
+        this.deployVariableValidator = deployVariableValidator;
     }
 
     @Override
@@ -134,11 +145,18 @@ public class OrchestratorService implements ApplicationListener<ApplicationEvent
         if (Objects.isNull(serviceEntity) || Objects.isNull(serviceEntity.getOcl())) {
             throw new RuntimeException("Registered service not found");
         }
+
+        // Check context validation
+        if (Objects.nonNull(serviceEntity.getOcl().getDeployment()) && Objects.nonNull(
+                deployTask.getCreateRequest().getProperty())) {
+            List<DeployVariable> deployVariables = serviceEntity.getOcl().getDeployment()
+                    .getContext();
+            deployVariableValidator.isVariableValid(deployVariables,
+                    deployTask.getCreateRequest().getProperty());
+        }
         // Set Ocl and CreateRequest
         deployTask.setOcl(serviceEntity.getOcl());
         deployTask.getCreateRequest().setOcl(serviceEntity.getOcl());
-        // Check context validation
-        checkContextValidation(deployTask);
         // Fill the handler
         fillHandler(deployTask);
         // get the deployment.
@@ -243,11 +261,10 @@ public class OrchestratorService implements ApplicationListener<ApplicationEvent
             throw new RuntimeException(String.format("Service with id %s is %s.",
                     deployTask.getId(), state));
         }
+
         // Set Ocl and CreateRequest
         deployTask.setCreateRequest(deployServiceEntity.getCreateRequest());
         deployTask.setOcl(deployServiceEntity.getCreateRequest().getOcl());
-        // Check context validation
-        checkContextValidation(deployTask);
         // Fill the handler
         fillHandler(deployTask);
         // get the deployment.
