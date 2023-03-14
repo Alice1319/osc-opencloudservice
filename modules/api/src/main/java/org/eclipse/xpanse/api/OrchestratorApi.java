@@ -28,7 +28,6 @@ import org.eclipse.xpanse.modules.models.query.RegisteredServiceQuery;
 import org.eclipse.xpanse.modules.models.resource.Ocl;
 import org.eclipse.xpanse.modules.models.service.CreateRequest;
 import org.eclipse.xpanse.modules.models.view.CategoryOclVo;
-import org.eclipse.xpanse.modules.models.view.OclDetailVo;
 import org.eclipse.xpanse.modules.models.view.ServiceVo;
 import org.eclipse.xpanse.orchestrator.OrchestratorService;
 import org.eclipse.xpanse.orchestrator.register.RegisterService;
@@ -293,17 +292,17 @@ public class OrchestratorApi {
     @GetMapping(value = "/register/{id}",
             produces = MediaType.APPLICATION_JSON_VALUE)
     @ResponseStatus(HttpStatus.OK)
-    public OclDetailVo detail(
+    public Ocl detail(
             @Parameter(name = "id", description = "id of registered service")
             @PathVariable("id") String id) {
         log.info("Get detail of registered service with name {}.", id);
-        OclDetailVo oclDetailVo =
+        RegisterServiceEntity registerServiceEntity =
                 registerService.getRegisteredService(id);
         String successMsg = String.format(
                 "Get detail of registered service with name %s success.",
                 id);
         log.info(successMsg);
-        return oclDetailVo;
+        return registerServiceEntity.getOcl();
     }
 
     /**
@@ -312,7 +311,7 @@ public class OrchestratorApi {
      * @return Returns the current state of the system.
      */
     @Tag(name = "Admin", description = "APIs for administrating Xpanse")
-    @GetMapping(value = "/health", produces = MediaType.APPLICATION_JSON_VALUE)
+    @GetMapping("/health")
     @ResponseStatus(HttpStatus.OK)
     public SystemStatus health() {
         SystemStatus systemStatus = new SystemStatus();
@@ -326,40 +325,53 @@ public class OrchestratorApi {
      * @return Status of the managed service.
      */
     @Tag(name = "Service", description = "APIs to manage the service instances")
-    @Operation(description = "Get deployed service using id.")
-    @GetMapping(value = "/service/{id}", produces = MediaType.APPLICATION_JSON_VALUE)
+    @GetMapping("/service/{id}")
     @ResponseStatus(HttpStatus.OK)
-    public DeployServiceEntity serviceDetail(
-            @Parameter(name = "id", description = "Task id of deploy service")
-            @PathVariable("id") String id) {
+    public DeployServiceEntity serviceDetail(@PathVariable("id") String id) {
 
         return this.orchestratorService.getDeployServiceDetail(UUID.fromString(id));
     }
 
     /**
-     * List the deployed services.
+     * Profiles the names of the managed services currently deployed.
      *
      * @return list of all services deployed.
      */
     @Tag(name = "Service", description = "APIs to manage the service instances")
-    @Operation(description = "List the deployed services.")
-    @GetMapping(value = "/services", produces = MediaType.APPLICATION_JSON_VALUE)
+    @GetMapping("/services")
     @ResponseStatus(HttpStatus.OK)
     public List<ServiceVo> services() {
         return this.orchestratorService.listDeployServices();
     }
 
     /**
-     * Start a task to deploy registered service.
+     * Get monitor data.
+     *
+     * @param id deploy service UUID.
+     * @return response
+     */
+    @Tag(name = "Service", description = "APIs to get monitor data")
+    @GetMapping(value = "/service/monitor/{id}",produces = MediaType.APPLICATION_JSON_VALUE)
+    @ResponseStatus(HttpStatus.OK)
+    public MonitorResource monitor(@PathVariable("id") UUID id,
+            @Parameter(name = "fromTime", description = "the start time of the monitoring range")
+            @RequestParam(value = "fromTime", required = false) String fromTime,
+            @Parameter(name = "toTime", description = "the end time of the monitoring range")
+            @RequestParam(value = "toTime", required = false) String toTime) {
+
+        return this.orchestratorService.monitor(id, fromTime, toTime);
+    }
+
+    /**
+     * Start registered managed service.
      *
      * @param deployRequest the managed service to create.
      * @return response
      */
     @Tag(name = "Service", description = "APIs to manage the service instances")
-    @Operation(description = "Start a task to deploy registered service.")
-    @PostMapping(value = "/service", produces = MediaType.APPLICATION_JSON_VALUE)
+    @PostMapping("/service")
     @ResponseStatus(HttpStatus.ACCEPTED)
-    public UUID deploy(@RequestBody CreateRequest deployRequest) {
+    public UUID start(@RequestBody CreateRequest deployRequest) {
         log.info("Starting managed service with name {}, version {}, csp {}",
                 deployRequest.getName(),
                 deployRequest.getVersion(), deployRequest.getCsp());
@@ -379,16 +391,15 @@ public class OrchestratorApi {
     }
 
     /**
-     * Start a task to destroy the deployed service using id.
+     * Stop started managed service.
      *
-     * @param id ID of deployed service.
+     * @param id name of managed service
      * @return response
      */
     @Tag(name = "Service", description = "APIs to manage the service instances")
-    @Operation(description = "Start a task to destroy the deployed service using id.")
-    @DeleteMapping(value = "/service/{id}", produces = MediaType.APPLICATION_JSON_VALUE)
+    @DeleteMapping("/service/{id}")
     @ResponseStatus(HttpStatus.ACCEPTED)
-    public Response destroy(@PathVariable("id") String id) {
+    public Response stop(@PathVariable("id") String id) {
         log.info("Stopping managed service with id {}", id);
         DeployTask deployTask = new DeployTask();
         deployTask.setId(UUID.fromString(id));
@@ -397,25 +408,6 @@ public class OrchestratorApi {
         String successMsg = String.format(
                 "Task of stop managed service %s start running.", id);
         return Response.successResponse(successMsg);
-    }
-
-
-    /**
-     * Get openapi of registered service by id.
-     *
-     * @param id id of registered service.
-     * @return response
-     */
-    @Tag(name = "Service", description = "APIs to get openapi of service deploy context")
-    @GetMapping(value = "/service/openapi/{id}", produces = MediaType.APPLICATION_JSON_VALUE)
-    @ResponseStatus(HttpStatus.OK)
-    public String openApi(@PathVariable("id") String id) {
-        log.info("Get openapi url of registered service with id {}", id);
-        String apiUrl = this.orchestratorService.getOpenApiUrl(id);
-        String successMsg = String.format(
-                "Get openapi of registered service success with Url %s.", apiUrl);
-        log.info(successMsg);
-        return apiUrl;
     }
 
 }
