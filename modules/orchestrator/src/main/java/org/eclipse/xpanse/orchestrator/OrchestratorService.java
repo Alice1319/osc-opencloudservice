@@ -6,6 +6,7 @@
 
 package org.eclipse.xpanse.orchestrator;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
@@ -35,6 +36,7 @@ import org.eclipse.xpanse.modules.monitor.Monitor;
 import org.eclipse.xpanse.orchestrator.register.RegisterServiceStorage;
 import org.eclipse.xpanse.orchestrator.service.DeployResourceStorage;
 import org.eclipse.xpanse.orchestrator.service.DeployServiceStorage;
+import org.eclipse.xpanse.orchestrator.utils.OpenApiUtil;
 import org.slf4j.MDC;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -378,7 +380,38 @@ public class OrchestratorService implements ApplicationListener<ApplicationEvent
                     + "existed.", id));
         }
         // TODO find the path of swagger-ui.html of the registered by id or generate swagger-ui.html
-        return null;
+        String rootPath = System.getProperty("user.dir");
+        File folder = new File(rootPath + "/openapi");
+        File file = new File(folder, uuid + ".html");
+        if (file.exists()) {
+            return "http://localhost:8080/openapi/" + uuid + ".html";
+        } else {
+           return OpenApiUtil.updateServiceApi(registerService);
+        }
+    }
+
+    /**
+     * delete OpenApi for registered service using the ID.
+     *
+     * @param id ID of registered service.
+     */
+    public void deleteOpenApi(String id) {
+        OpenApiUtil.deleteServiceApi(id);
+    }
+
+    /**
+     * update OpenApi for registered service using the ID.
+     *
+     * @param id ID of registered service.
+     */
+    public void updateOpenApi(String id) {
+        UUID uuid = UUID.fromString(id);
+        RegisterServiceEntity registerService = registerServiceStorage.getRegisterServiceById(uuid);
+        if (Objects.isNull(registerService) || Objects.isNull(registerService.getOcl())) {
+            throw new IllegalArgumentException(String.format("Registered service with id %s not "
+                    + "existed.", id));
+        }
+        OpenApiUtil.updateServiceApi(registerService);
     }
 
 }

@@ -129,6 +129,7 @@ public class OrchestratorApi {
         String successMsg = String.format(
                 "Update registered service with id %s success.", id);
         log.info(successMsg);
+        this.orchestratorService.updateOpenApi(id);
         return Response.successResponse(successMsg);
     }
 
@@ -183,6 +184,7 @@ public class OrchestratorApi {
         String successMsg = String.format(
                 "Update registered service %s with Url %s", id, oclLocation);
         log.info(successMsg);
+        this.orchestratorService.updateOpenApi(id);
         return Response.successResponse(successMsg);
     }
 
@@ -206,6 +208,7 @@ public class OrchestratorApi {
         String successMsg = String.format(
                 "Unregister registered service using id %s success.", id);
         log.info(successMsg);
+        this.orchestratorService.deleteOpenApi(id);
         return Response.successResponse(successMsg);
     }
 
