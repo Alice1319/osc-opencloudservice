@@ -3,11 +3,10 @@ import {Col, Row, Space, Tree} from 'antd';
 import {DataNode, TreeProps} from "antd/es/tree";
 import MiddlerWareTabs from "./MiddlerWareTabs";
 import {
-  ServiceStatus,
-  ServiceStatusServiceStateEnum,
   SystemStatus
 } from "../../../../xpanse-api/generated";
 import {serviceVendorApi} from "../../../../xpanse-api/xpanseRestApiClient";
+import { ServiceStatusServiceStateEnum } from '../../../../xpanse-api/generated/models/ServiceStatus';
 
 
 function MiddleWare(): JSX.Element {
@@ -17,11 +16,8 @@ function MiddleWare(): JSX.Element {
   const [serviceData, setServiceData] = useState([]);
 
   serviceVendorApi
-  .listRegisteredService()
+  .listRegisteredServices()
   .then((response)=>{
-    console.log(response.data)
-    setServiceData(response.data)
-    setServiceName(response.data[1].id)
   })
   .catch((error: any) =>{
     console.error(error);
