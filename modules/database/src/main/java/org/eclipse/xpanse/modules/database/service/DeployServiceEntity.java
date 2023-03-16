@@ -1,0 +1,91 @@
+/*
+ * SPDX-License-Identifier: Apache-2.0
+ * SPDX-FileCopyrightText: Huawei Inc.
+ *
+ */
+
+package org.eclipse.xpanse.modules.database.service;
+
+import io.hypersistence.utils.hibernate.type.json.JsonType;
+import io.swagger.v3.oas.annotations.Hidden;
+import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.Id;
+import jakarta.persistence.OneToMany;
+import jakarta.persistence.Table;
+import java.util.List;
+import java.util.UUID;
+import lombok.Data;
+import lombok.EqualsAndHashCode;
+import org.eclipse.xpanse.modules.database.common.CreateModifiedTime;
+import org.eclipse.xpanse.modules.database.common.ObjectJsonConverter;
+import org.eclipse.xpanse.modules.models.enums.Category;
+import org.eclipse.xpanse.modules.models.enums.Csp;
+import org.eclipse.xpanse.modules.models.enums.ServiceState;
+import org.eclipse.xpanse.modules.models.service.CreateRequest;
+import org.hibernate.annotations.Cascade;
+import org.hibernate.annotations.CascadeType;
+import org.hibernate.annotations.Type;
+
+/**
+ * DeployServiceEntity for persistence.
+ */
+@Table(name = "DEPLOY_SERVICE")
+@Entity
+@Data
+@EqualsAndHashCode(callSuper = true)
+public class DeployServiceEntity extends CreateModifiedTime {
+
+    @Hidden
+    @Id
+    private UUID id;
+
+    /**
+     * The category of the Service.
+     */
+    @Enumerated(EnumType.STRING)
+    private Category category;
+
+    /**
+     * The name of the Service.
+     */
+    private String name;
+
+    /**
+     * The version of the Service.
+     */
+    private String version;
+
+    /**
+     * The csp of the Service.
+     */
+    @Enumerated(EnumType.STRING)
+    private Csp csp;
+
+    /**
+     * The flavor of the Service.
+     */
+    private String flavor;
+
+    /**
+     * The state of the Service.
+     */
+    @Enumerated(EnumType.STRING)
+    private ServiceState serviceState;
+
+    /**
+     * The Ocl object of the XpanseDeployTask.
+     */
+    @Column(columnDefinition = "json")
+    @Type(value = JsonType.class)
+    @Convert(converter = ObjectJsonConverter.class)
+    private CreateRequest createRequest;
+
+    @OneToMany(mappedBy = "deployService", orphanRemoval = true)
+    @Cascade({CascadeType.ALL})
+    private List<DeployResourceEntity> deployResourceEntity;
+
+}

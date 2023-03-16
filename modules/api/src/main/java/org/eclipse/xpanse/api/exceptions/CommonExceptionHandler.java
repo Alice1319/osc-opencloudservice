@@ -8,9 +8,11 @@ package org.eclipse.xpanse.api.exceptions;
 
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.validation.ConstraintViolationException;
-import org.eclipse.xpanse.api.response.ErrCode;
-import org.eclipse.xpanse.api.response.ErrResponse;
+import lombok.extern.slf4j.Slf4j;
+import org.eclipse.xpanse.api.response.Response;
+import org.eclipse.xpanse.api.response.ResultCode;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.converter.HttpMessageConversionException;
 import org.springframework.validation.BindingResult;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -23,6 +25,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 /**
  * Exception handler for the REST API.
  */
+@Slf4j
 @RestControllerAdvice
 public class CommonExceptionHandler {
 
@@ -32,14 +35,15 @@ public class CommonExceptionHandler {
     @ExceptionHandler({MethodArgumentNotValidException.class})
     @ResponseStatus(HttpStatus.BAD_REQUEST)
     @ResponseBody
-    public ErrResponse handleMethodArgumentNotValidException(MethodArgumentNotValidException ex) {
+    public Response handleMethodArgumentNotValidException(MethodArgumentNotValidException ex) {
+        log.error("handleMethodArgumentNotValidException: ", ex);
         BindingResult bindingResult = ex.getBindingResult();
         StringBuilder sb = new StringBuilder();
         for (FieldError fieldError : bindingResult.getFieldErrors()) {
             sb.append(fieldError.getField()).append("：").append(fieldError.getDefaultMessage())
-                    .append(", ");
+                .append(", ");
         }
-        return new ErrResponse(ErrCode.BAD_PARAMETERS, sb.toString());
+        return Response.errorResponse(ResultCode.BAD_PARAMETERS, sb.toString());
     }
 
     /**
@@ -48,9 +52,10 @@ public class CommonExceptionHandler {
     @ExceptionHandler({ConstraintViolationException.class})
     @ResponseStatus(HttpStatus.BAD_REQUEST)
     @ResponseBody
-    public ErrResponse handleConstraintViolationException(ConstraintViolationException ex) {
+    public Response handleConstraintViolationException(ConstraintViolationException ex) {
+        log.error("handleConstraintViolationException: ", ex);
         String failMessage = ex.getMessage();
-        return new ErrResponse(ErrCode.BAD_PARAMETERS, failMessage);
+        return Response.errorResponse(ResultCode.BAD_PARAMETERS, failMessage);
     }
 
     /**
@@ -58,15 +63,42 @@ public class CommonExceptionHandler {
      */
     @ExceptionHandler({RuntimeException.class})
     @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
-    public ErrResponse handleRuntimeException(RuntimeException ex) {
+    public Response handleRuntimeException(RuntimeException ex) {
         String failMessage = ex.getMessage();
-        return new ErrResponse(ErrCode.RUNTIME_ERROR, failMessage);
+        log.error("handleRuntimeException: ", ex);
+        return Response.errorResponse(ResultCode.RUNTIME_ERROR, failMessage);
     }
 
+    /**
+     * Exception handler for HttpMessageConversionException.
+     */
+    @ExceptionHandler({HttpMessageConversionException.class})
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public Response handleHttpMessageConversionException(HttpMessageConversionException ex) {
+        log.error("handleHttpMessageConversionException: ", ex);
+        String failMessage = ex.getMessage();
+        return Response.errorResponse(ResultCode.BAD_PARAMETERS, failMessage);
+    }
+
+    /**
+     * Exception handler for EntityNotFoundException.
+     */
     @ExceptionHandler({EntityNotFoundException.class})
     @ResponseStatus(HttpStatus.NOT_FOUND)
-    public ErrResponse handleNotFoundException(EntityNotFoundException ex) {
+    public Response handleNotFoundException(EntityNotFoundException ex) {
+        log.error("handleNotFoundException: ", ex);
         String failMessage = ex.getMessage();
-        return new ErrResponse(ErrCode.BAD_PARAMETERS, failMessage);
+        return Response.errorResponse(ResultCode.BAD_PARAMETERS, failMessage);
+    }
+
+    /**
+     * Exception handler for Exception.
+     */
+    @ExceptionHandler({Exception.class})
+    @ResponseStatus(HttpStatus.NOT_FOUND)
+    public Response handleException(Exception ex) {
+        log.error("handleException: ", ex);
+        String failMessage = ex.getClass().getName() + ":" + ex.getMessage();
+        return Response.errorResponse(ResultCode.RUNTIME_ERROR, failMessage);
     }
 }

@@ -6,44 +6,92 @@
 
 package org.eclipse.xpanse.orchestrator;
 
-import jakarta.persistence.EntityNotFoundException;
-import java.net.URL;
+import java.io.File;
 import java.util.ArrayList;
-import java.util.Collections;
+import java.util.Date;
 import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.stream.Collectors;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
-import org.eclipse.xpanse.modules.database.ServiceStatusEntity;
-import org.eclipse.xpanse.modules.ocl.loader.OclLoader;
-import org.eclipse.xpanse.modules.ocl.loader.data.models.Ocl;
-import org.eclipse.xpanse.modules.ocl.loader.data.models.ServiceStatus;
-import org.eclipse.xpanse.modules.ocl.loader.data.models.enums.ServiceState;
+import org.apache.commons.lang3.StringUtils;
+import org.eclipse.xpanse.modules.database.register.RegisterServiceEntity;
+import org.eclipse.xpanse.modules.database.service.DeployResourceEntity;
+import org.eclipse.xpanse.modules.database.service.DeployServiceEntity;
+import org.eclipse.xpanse.modules.deployment.Deployment;
+import org.eclipse.xpanse.modules.deployment.deployers.terraform.DeployTask;
+import org.eclipse.xpanse.modules.models.enums.Csp;
+import org.eclipse.xpanse.modules.models.enums.DeployerKind;
+import org.eclipse.xpanse.modules.models.enums.ServiceState;
+import org.eclipse.xpanse.modules.models.resource.DeployVariable;
+import org.eclipse.xpanse.modules.models.service.DeployResource;
+import org.eclipse.xpanse.modules.models.service.DeployResult;
+import org.eclipse.xpanse.modules.models.service.MonitorDataResponse;
+import org.eclipse.xpanse.modules.models.service.MonitorResource;
+import org.eclipse.xpanse.modules.models.utils.DeployVariableValidator;
+import org.eclipse.xpanse.modules.models.view.ServiceVo;
+import org.eclipse.xpanse.modules.monitor.Monitor;
+import org.eclipse.xpanse.orchestrator.register.RegisterServiceStorage;
+import org.eclipse.xpanse.orchestrator.service.DeployResourceStorage;
+import org.eclipse.xpanse.orchestrator.service.DeployServiceStorage;
+import org.eclipse.xpanse.orchestrator.utils.OpenApiUtil;
+import org.slf4j.MDC;
+import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationEvent;
 import org.springframework.context.ApplicationListener;
 import org.springframework.context.event.ContextRefreshedEvent;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.CollectionUtils;
 
 /**
  * Main class which orchestrates the OCL request processing. Calls the available plugins to deploy
  * managed service in the respective infrastructure as defined in the OCL.
  */
 @Slf4j
+@Transactional
 @Component
 public class OrchestratorService implements ApplicationListener<ApplicationEvent> {
 
-    private final DatabaseOrchestratorStorage databaseOrchestratorStorage;
-    private final OclLoader oclLoader;
+
+    private static final String TASK_ID = "TASK_ID";
+
+    private final RegisterServiceStorage registerServiceStorage;
+
+    private final DeployServiceStorage deployServiceStorage;
+
+    private final DeployResourceStorage deployResourceStorage;
+
+    private final DeployVariableValidator deployVariableValidator;
+
+    private final OpenApiUtil openApiUtil;
 
     @Getter
+    private final List<Deployment> deployers = new ArrayList<>();
+    @Getter
     private final List<OrchestratorPlugin> plugins = new ArrayList<>();
+    @Getter
+    private final List<Monitor> monitors = new ArrayList<>();
+    @Value("${monitor.data.agent.enable}")
+    private Boolean monitorAgentEnabled;
 
     @Autowired
-    public OrchestratorService(OclLoader oclLoader,
-                               DatabaseOrchestratorStorage databaseOrchestratorStorage) {
-        this.oclLoader = oclLoader;
-        this.databaseOrchestratorStorage = databaseOrchestratorStorage;
+    OrchestratorService(RegisterServiceStorage registerServiceStorage,
+            DeployServiceStorage deployServiceStorage,
+            DeployResourceStorage deployResourceStorage,
+            DeployVariableValidator deployVariableValidator,
+            OpenApiUtil openApiUtil) {
+        this.registerServiceStorage = registerServiceStorage;
+        this.deployServiceStorage = deployServiceStorage;
+        this.deployResourceStorage = deployResourceStorage;
+        this.deployVariableValidator = deployVariableValidator;
+        this.openApiUtil = openApiUtil;
     }
 
     @Override
@@ -52,236 +100,324 @@ public class OrchestratorService implements ApplicationListener<ApplicationEvent
             ApplicationContext applicationContext =
                     ((ContextRefreshedEvent) event).getApplicationContext();
             plugins.addAll(applicationContext.getBeansOfType(OrchestratorPlugin.class).values());
-            if (plugins.size() > 1) {
-                throw new RuntimeException("More than one xpanse plugin found. "
-                        + "Only one plugin can be active at a time.");
-            }
             if (plugins.isEmpty()) {
                 log.warn("No xpanse plugins loaded by the runtime.");
             }
-        }
-    }
 
-    /**
-     * Register a managed service on all orchestrator plugins, using OCL descriptor location.
-     *
-     * @param oclLocation the location of the OCL descriptor.
-     * @throws Exception if registration fails.
-     */
-    public void registerManagedService(String oclLocation) throws Exception {
-        Ocl ocl = this.oclLoader.getOcl(new URL(oclLocation));
-        registerManagedService(ocl);
-    }
+            deployers.addAll(applicationContext.getBeansOfType(Deployment.class).values());
+            if (deployers.isEmpty()) {
+                log.warn("No deployer loaded by the runtime.");
+            }
 
-    /**
-     * Register a managed service on all orchestrator plugins, directly using OCL descriptor.
-     *
-     * @param ocl the OCL descriptor.
-     */
-    public void registerManagedService(Ocl ocl) {
-        if (plugins.isEmpty()) {
-            log.warn("No plugins available. Request ignored.");
-            return;
-        }
-
-        for (OrchestratorPlugin plugin : plugins) {
-            try {
-                plugin.registerManagedService(ocl);
-                this.databaseOrchestratorStorage.store(getNewServiceStatusEntity(plugin, ocl));
-            } catch (RuntimeException exception) {
-                this.databaseOrchestratorStorage.store(
-                        getFailedServiceStatusEntity(plugin, ocl, exception));
-                throw exception;
+            monitors.addAll(applicationContext.getBeansOfType(Monitor.class).values());
+            if (monitors.isEmpty()) {
+                log.warn("No monitor loaded by the runtime.");
             }
         }
     }
 
     /**
-     * Update existing managed service with a new/updated OCL descriptor, at the given location.
+     * Persist the result of the deployment.
      *
-     * @param managedServiceName the managed service to update, identified by the given name.
-     * @param oclLocation        the new/updated OCL descriptor location.
-     * @throws Exception if the update fails.
+     * @param deployTask the task of the deployment.
      */
-    public void updateManagedService(String managedServiceName, String oclLocation)
-            throws Exception {
-        Ocl ocl = oclLoader.getOcl(new URL(oclLocation));
-        updateManagedService(managedServiceName, ocl);
+    public DeployServiceEntity getNewDeployServiceTask(DeployTask deployTask) {
+        DeployServiceEntity entity = new DeployServiceEntity();
+        entity.setId(deployTask.getId());
+        entity.setCreateTime(new Date());
+        entity.setVersion(StringUtils.lowerCase(deployTask.getCreateRequest().getVersion()));
+        entity.setName(StringUtils.lowerCase(deployTask.getCreateRequest().getName()));
+        entity.setCsp(deployTask.getCreateRequest().getCsp());
+        entity.setCategory(deployTask.getCreateRequest().getCategory());
+        entity.setFlavor(deployTask.getCreateRequest().getFlavor());
+        entity.setCreateRequest(deployTask.getCreateRequest());
+        return entity;
     }
 
     /**
-     * Update existing managed service with a new/updated OCL descriptor.
+     * Get deployment and fill deployTask for deploy service task.
      *
-     * @param managedServiceName the managed service to update, identified by the given name.
-     * @param ocl                the new/update OCL descriptor.
+     * @param deployTask the task of deploy managed service name.
      */
-    public void updateManagedService(String managedServiceName, Ocl ocl) {
-        if (!this.databaseOrchestratorStorage.isExists(managedServiceName)) {
-            throw new EntityNotFoundException(
-                    "Managed service " + managedServiceName + " not found");
+    public Deployment getDeployHandler(DeployTask deployTask) {
+
+        // Find the registered service and fill Ocl.
+        RegisterServiceEntity serviceEntity = new RegisterServiceEntity();
+        serviceEntity.setName(StringUtils.lowerCase(deployTask.getCreateRequest().getName()));
+        serviceEntity.setVersion(StringUtils.lowerCase(deployTask.getCreateRequest().getVersion()));
+        serviceEntity.setCsp(deployTask.getCreateRequest().getCsp());
+        serviceEntity.setCategory(deployTask.getCreateRequest().getCategory());
+        serviceEntity = registerServiceStorage.findRegisteredService(serviceEntity);
+        if (Objects.isNull(serviceEntity) || Objects.isNull(serviceEntity.getOcl())) {
+            throw new RuntimeException("Registered service not found");
         }
-        for (OrchestratorPlugin orchestratorPlugin : plugins) {
-            try {
-                ServiceStatusEntity serviceStatusEntity =
-                        this.databaseOrchestratorStorage.getServiceDetailsByNameAndPlugin(
-                                managedServiceName,
-                                orchestratorPlugin);
-                serviceStatusEntity.setServiceState(ServiceState.UPDATING);
-                this.databaseOrchestratorStorage.store(serviceStatusEntity);
-                orchestratorPlugin.updateManagedService(managedServiceName, ocl);
-                serviceStatusEntity.setServiceState(ServiceState.UPDATED);
-                this.databaseOrchestratorStorage.store(serviceStatusEntity);
-            } catch (RuntimeException exception) {
-                this.databaseOrchestratorStorage.store(getFailedServiceStatusEntity(
-                        orchestratorPlugin, ocl, exception));
-                throw exception;
+
+        // Check context validation
+        if (Objects.nonNull(serviceEntity.getOcl().getDeployment()) && Objects.nonNull(
+                deployTask.getCreateRequest().getProperty())) {
+            List<DeployVariable> deployVariables = serviceEntity.getOcl().getDeployment()
+                    .getContext();
+            deployVariableValidator.isVariableValid(deployVariables,
+                    deployTask.getCreateRequest().getProperty());
+        }
+        // Set Ocl and CreateRequest
+        deployTask.setOcl(serviceEntity.getOcl());
+        deployTask.getCreateRequest().setOcl(serviceEntity.getOcl());
+        // Fill the handler
+        fillHandler(deployTask);
+        // get the deployment.
+        return getDeployment(deployTask);
+    }
+
+    /**
+     * Async method to deploy service.
+     *
+     * @param id Deploy service UUID.
+     */
+    public MonitorResource monitor(UUID id, String fromTime, String toTime) {
+        // Find the deployed service.
+        DeployServiceEntity deployServiceEntity =
+                deployServiceStorage.findDeployServiceById(id);
+        if (Objects.isNull(deployServiceEntity) || Objects.isNull(
+                deployServiceEntity.getCreateRequest()) || Objects.isNull(
+                deployServiceEntity.getDeployResourceEntity())) {
+            throw new RuntimeException(String.format("Deployed service with id %s not found",
+                    id));
+        }
+        Csp csp = deployServiceEntity.getCreateRequest().getCsp();
+
+        Optional<Monitor> monitorOptional =
+                this.monitors.stream()
+                        .filter(monitor -> monitor.getCsp() == csp)
+                        .findFirst();
+        if (monitorOptional.isEmpty()) {
+            throw new RuntimeException("Can't find suitable monitor for the Task.");
+        }
+        Monitor monitor = monitorOptional.get();
+        MonitorResource monitorResource = new MonitorResource();
+        List<MonitorDataResponse> cpu = monitor.cpuUsage(deployServiceEntity, monitorAgentEnabled,
+                fromTime, toTime);
+        List<MonitorDataResponse> mem = monitor.memUsage(deployServiceEntity, monitorAgentEnabled,
+                fromTime, toTime);
+        monitorResource.setCpu(cpu);
+        monitorResource.setMem(mem);
+        return monitorResource;
+
+    }
+
+    /**
+     * Async method to deploy service.
+     *
+     * @param deployment deployment
+     * @param deployTask deployTask
+     */
+    @Async("taskExecutor")
+    @Transactional
+    public void asyncDeployService(Deployment deployment, DeployTask deployTask) {
+        MDC.put(TASK_ID, deployTask.getId().toString());
+        DeployServiceEntity deployServiceEntity = getNewDeployServiceTask(deployTask);
+        try {
+            deployServiceEntity.setServiceState(ServiceState.DEPLOYING);
+            deployServiceStorage.store(deployServiceEntity);
+            DeployResult deployResult = deployment.deploy(deployTask);
+            deployServiceEntity.setServiceState(ServiceState.DEPLOY_SUCCESS);
+            deployServiceEntity.setDeployResourceEntity(
+                    getDeployResourceEntityList(deployResult.getResources(), deployServiceEntity));
+            deployServiceStorage.store(deployServiceEntity);
+        } catch (Exception e) {
+            log.error("asyncDeployService failed.", e);
+            deployServiceEntity.setServiceState(ServiceState.DEPLOY_FAILED);
+            deployServiceStorage.store(deployServiceEntity);
+        }
+
+    }
+
+    private List<DeployResourceEntity> getDeployResourceEntityList(
+            List<DeployResource> deployResources, DeployServiceEntity deployServiceEntity) {
+        List<DeployResourceEntity> deployResourceEntities = new ArrayList<>();
+        if (CollectionUtils.isEmpty(deployResources)) {
+            return deployResourceEntities;
+        }
+        for (DeployResource resource : deployResources) {
+            DeployResourceEntity deployResource = new DeployResourceEntity();
+            BeanUtils.copyProperties(resource, deployResource);
+            deployResource.setDeployService(deployServiceEntity);
+            deployResourceEntities.add(deployResource);
+        }
+        return deployResourceEntities;
+    }
+
+    /**
+     * Get deployment and fill deployTask for destroy service task.
+     *
+     * @param deployTask the task of deploy managed service name.
+     */
+    public Deployment getDestroyHandler(DeployTask deployTask) {
+        // Find the deployed service.
+        DeployServiceEntity deployServiceEntity =
+                deployServiceStorage.findDeployServiceById(deployTask.getId());
+        if (Objects.isNull(deployServiceEntity) || Objects.isNull(
+                deployServiceEntity.getCreateRequest())) {
+            throw new RuntimeException(String.format("Deployed service with id %s not found",
+                    deployTask.getId()));
+        }
+        // Get state of service.
+        ServiceState state = deployServiceEntity.getServiceState();
+        if (state.equals(ServiceState.DEPLOYING) || state.equals(ServiceState.DESTROYING)) {
+            throw new RuntimeException(String.format("Service with id %s is %s.",
+                    deployTask.getId(), state));
+        }
+
+        // Set Ocl and CreateRequest
+        deployTask.setCreateRequest(deployServiceEntity.getCreateRequest());
+        deployTask.setOcl(deployServiceEntity.getCreateRequest().getOcl());
+        // Fill the handler
+        fillHandler(deployTask);
+        // get the deployment.
+        return getDeployment(deployTask);
+
+    }
+
+    /**
+     * Async method to deploy service.
+     *
+     * @param deployment deployment
+     * @param deployTask deployTask
+     */
+    @Async("taskExecutor")
+    @Transactional
+    public void asyncDestroyService(Deployment deployment, DeployTask deployTask) {
+        MDC.put(TASK_ID, deployTask.getId().toString());
+        DeployServiceEntity deployServiceEntity =
+                deployServiceStorage.findDeployServiceById(deployTask.getId());
+        if (Objects.isNull(deployServiceEntity)) {
+            throw new RuntimeException(String.format("Deployed service with id %s not found",
+                    deployTask.getId()));
+        }
+        try {
+            deployServiceEntity.setServiceState(ServiceState.DESTROYING);
+            deployServiceStorage.store(deployServiceEntity);
+            DeployResult deployResult = deployment.destroy(deployTask);
+            deployServiceEntity.setServiceState(ServiceState.DESTROY_SUCCESS);
+            List<DeployResource> resources = deployResult.getResources();
+            if (CollectionUtils.isEmpty(resources)) {
+                deployResourceStorage.deleteByDeployServiceId(deployServiceEntity.getId());
+            } else {
+                deployServiceEntity.setDeployResourceEntity(
+                        getDeployResourceEntityList(resources, deployServiceEntity));
             }
+            deployServiceStorage.store(deployServiceEntity);
+        } catch (RuntimeException e) {
+            log.error("asyncDestroyService failed", e);
+            deployServiceEntity.setServiceState(ServiceState.DESTROY_FAILED);
+            deployServiceStorage.store(deployServiceEntity);
+        }
+
+    }
+
+
+    /**
+     * List deploy services.
+     *
+     * @return serviceVos
+     */
+    public List<ServiceVo> listDeployServices() {
+        List<DeployServiceEntity> deployServices =
+                deployServiceStorage.services();
+        return deployServices.stream().map(service -> {
+            ServiceVo serviceVo = new ServiceVo();
+            BeanUtils.copyProperties(service, serviceVo);
+            return serviceVo;
+        }).collect(Collectors.toList());
+
+    }
+
+    /**
+     * Get deploy service detail by id.
+     *
+     * @param id ID of deploy service.
+     * @return deployService
+     */
+    public DeployServiceEntity getDeployServiceDetail(UUID id) {
+        return deployServiceStorage.findDeployServiceById(id);
+
+    }
+
+
+    private void fillHandler(DeployTask deployTask) {
+        // Find the deployment plugin and resource handler
+        Optional<OrchestratorPlugin> pluginOptional =
+                this.plugins.stream()
+                        .filter(plugin -> plugin.getCsp() == deployTask.getCreateRequest().getCsp())
+                        .findFirst();
+        if (pluginOptional.isEmpty() || Objects.isNull(pluginOptional.get().getResourceHandler())) {
+            throw new RuntimeException("Can't find suitable plugin and resource handler for the "
+                    + "Task.");
+        }
+        deployTask.setDeployResourceHandler(pluginOptional.get().getResourceHandler());
+    }
+
+    private Deployment getDeployment(DeployTask deployTask) {
+        DeployerKind deployerKind = deployTask.getOcl().getDeployment().getKind();
+        Optional<Deployment> deploymentOptional =
+                this.deployers.stream()
+                        .filter(deployer -> deployer.getDeployerKind() == deployerKind)
+                        .findFirst();
+        if (deploymentOptional.isEmpty()) {
+            throw new RuntimeException("Can't find suitable deployer for the Task.");
+        }
+        return deploymentOptional.get();
+    }
+
+
+    /**
+     * generate OpenApi for registered service using the ID.
+     *
+     * @param id ID of registered service.
+     * @return path of openapi.html
+     */
+    public String getOpenApiUrl(String id) {
+        UUID uuid = UUID.fromString(id);
+        RegisterServiceEntity registerService = registerServiceStorage.getRegisterServiceById(uuid);
+        if (Objects.isNull(registerService) || Objects.isNull(registerService.getOcl())) {
+            throw new IllegalArgumentException(String.format("Registered service with id %s not "
+                    + "existed.", id));
+        }
+        // TODO find the path of swagger-ui.html of the registered by id or generate swagger-ui.html
+        String rootPath = System.getProperty("user.dir");
+        File folder = new File(rootPath + "/openapi");
+        File file = new File(folder, uuid + ".html");
+        if (file.exists()) {
+            return "http://localhost:8080/openapi/" + uuid + ".html";
+        } else {
+            return openApiUtil.creatServiceApi(registerService);
         }
     }
 
     /**
-     * Start (expose to users) a managed service on all orchestrator plugins.
+     * delete OpenApi for registered service using the ID.
      *
-     * @param managedServiceName the managed service name.
+     * @param id ID of registered service.
      */
-    public void startManagedService(String managedServiceName) {
-        if (!this.databaseOrchestratorStorage.isExists(managedServiceName)) {
-            throw new EntityNotFoundException(
-                    "Managed service " + managedServiceName + " not found");
-        }
-        for (OrchestratorPlugin orchestratorPlugin : plugins) {
-            ServiceStatusEntity serviceStatusEntity =
-                    this.databaseOrchestratorStorage.getServiceDetailsByNameAndPlugin(
-                            managedServiceName,
-                            orchestratorPlugin);
-            try {
-                serviceStatusEntity.setServiceState(ServiceState.STARTING);
-                this.databaseOrchestratorStorage.store(serviceStatusEntity);
-                orchestratorPlugin.startManagedService(managedServiceName);
-                serviceStatusEntity.setServiceState(ServiceState.STARTED);
-                this.databaseOrchestratorStorage.store(serviceStatusEntity);
-
-            } catch (RuntimeException exception) {
-                this.databaseOrchestratorStorage.store(getFailedServiceStatusEntity(
-                        orchestratorPlugin, serviceStatusEntity.getOcl(), exception));
-                throw exception;
-            }
-        }
+    @Async("taskExecutor")
+    public void deleteOpenApi(String id) {
+        openApiUtil.deleteServiceApi(id);
     }
 
     /**
-     * Stop (managed service is not visible to users anymore) a managed service on all orchestrator
-     * plugins.
+     * update OpenApi for registered service using the ID.
      *
-     * @param managedServiceName the managed service name.
+     * @param id ID of registered service.
      */
-    public void stopManagedService(String managedServiceName) {
-        if (!this.databaseOrchestratorStorage.isExists(managedServiceName)) {
-            throw new EntityNotFoundException(
-                    "Managed service " + managedServiceName + " not found");
+    @Async("taskExecutor")
+    public void updateOpenApi(String id) {
+        UUID uuid = UUID.fromString(id);
+        RegisterServiceEntity registerService = registerServiceStorage.getRegisterServiceById(uuid);
+        if (Objects.isNull(registerService) || Objects.isNull(registerService.getOcl())) {
+            throw new IllegalArgumentException(String.format("Registered service with id %s not "
+                    + "existed.", id));
         }
-        for (OrchestratorPlugin orchestratorPlugin : plugins) {
-            ServiceStatusEntity serviceStatusEntity =
-                    this.databaseOrchestratorStorage.getServiceDetailsByNameAndPlugin(
-                            managedServiceName,
-                            orchestratorPlugin);
-            try {
-                orchestratorPlugin.stopManagedService(managedServiceName);
-                serviceStatusEntity.setServiceState(ServiceState.STOPPED);
-                this.databaseOrchestratorStorage.store(serviceStatusEntity);
-            } catch (RuntimeException exception) {
-                this.databaseOrchestratorStorage.store(getFailedServiceStatusEntity(
-                        orchestratorPlugin, serviceStatusEntity.getOcl(), exception));
-                throw exception;
-            }
-
-        }
+        openApiUtil.updateServiceApi(registerService);
     }
 
-    /**
-     * Unregister a managed service and destroy/clean all associated resources on all orchestrator
-     * plugins.
-     *
-     * @param managedServiceName the managed service name.
-     */
-    public void unregisterManagedService(String managedServiceName) {
-        if (!this.databaseOrchestratorStorage.isExists(managedServiceName)) {
-            throw new EntityNotFoundException(
-                    "Managed service " + managedServiceName + " not found");
-        }
-        for (OrchestratorPlugin orchestratorPlugin : plugins) {
-            ServiceStatusEntity serviceStatusEntity =
-                    this.databaseOrchestratorStorage.getServiceDetailsByNameAndPlugin(
-                            managedServiceName,
-                            orchestratorPlugin);
-            try {
-                serviceStatusEntity.setServiceState(ServiceState.DELETING);
-                this.databaseOrchestratorStorage.store(serviceStatusEntity);
-                orchestratorPlugin.unregisterManagedService(managedServiceName);
-                this.databaseOrchestratorStorage.remove(managedServiceName, orchestratorPlugin);
-            } catch (RuntimeException exception) {
-                this.databaseOrchestratorStorage.store(getFailedServiceStatusEntity(
-                        orchestratorPlugin, serviceStatusEntity.getOcl(), exception));
-                throw exception;
-            }
-
-        }
-    }
-
-    /**
-     * Get the runtime state of the managed service.
-     *
-     * @param managedServiceName the managed service name.
-     */
-    public ServiceStatus getManagedServiceState(String managedServiceName) {
-        if (!this.databaseOrchestratorStorage.isExists(managedServiceName)) {
-            throw new EntityNotFoundException(
-                    "Managed service " + managedServiceName + " not found");
-        }
-
-        return getServiceStatusFromEntity(
-                this.databaseOrchestratorStorage.getServiceDetailsByName(managedServiceName));
-    }
-
-    /**
-     * Method to get all ServiceStatus objects stored in database.
-     *
-     * @return returns all ServiceStatus objects stored in database
-     */
-    public List<ServiceStatus> getStoredServices() {
-        List<ServiceStatus> serviceStatuses = new ArrayList<>(Collections.emptyList());
-        this.databaseOrchestratorStorage.services()
-                .forEach(serviceStatusEntity -> serviceStatuses.add(
-                        getServiceStatusFromEntity(serviceStatusEntity)));
-        return serviceStatuses;
-    }
-
-    private ServiceStatusEntity getNewServiceStatusEntity(OrchestratorPlugin orchestratorPlugin,
-                                                          Ocl ocl) {
-        ServiceStatusEntity serviceStatusEntity = new ServiceStatusEntity();
-        serviceStatusEntity.setServiceName(ocl.getName());
-        serviceStatusEntity.setServiceState(ServiceState.REGISTERED);
-        serviceStatusEntity.setOcl(ocl);
-        serviceStatusEntity.setPluginName(orchestratorPlugin.getClass().getSimpleName());
-        return serviceStatusEntity;
-    }
-
-    private ServiceStatusEntity getFailedServiceStatusEntity(OrchestratorPlugin orchestratorPlugin,
-                                                             Ocl ocl, Exception exception) {
-        ServiceStatusEntity serviceStatusEntity = new ServiceStatusEntity();
-        serviceStatusEntity.setServiceName(ocl.getName());
-        serviceStatusEntity.setServiceState(ServiceState.FAILED);
-        serviceStatusEntity.setOcl(ocl);
-        serviceStatusEntity.setPluginName(orchestratorPlugin.getClass().getSimpleName());
-        serviceStatusEntity.setStatusMessage(exception.getMessage());
-        return serviceStatusEntity;
-    }
-
-    private ServiceStatus getServiceStatusFromEntity(ServiceStatusEntity serviceStatusEntity) {
-        ServiceStatus serviceStatus = new ServiceStatus();
-        serviceStatus.setServiceName(serviceStatusEntity.getServiceName());
-        serviceStatus.setServiceState(serviceStatusEntity.getServiceState());
-        serviceStatus.setStatusMessage(serviceStatusEntity.getStatusMessage());
-        return serviceStatus;
-    }
 }
