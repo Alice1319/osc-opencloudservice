@@ -70,6 +70,8 @@ public class OrchestratorService implements ApplicationListener<ApplicationEvent
 
     private final DeployVariableValidator deployVariableValidator;
 
+    private final OpenApiUtil openApiUtil;
+
     @Getter
     private final List<Deployment> deployers = new ArrayList<>();
     @Getter
@@ -83,11 +85,13 @@ public class OrchestratorService implements ApplicationListener<ApplicationEvent
     OrchestratorService(RegisterServiceStorage registerServiceStorage,
             DeployServiceStorage deployServiceStorage,
             DeployResourceStorage deployResourceStorage,
-            DeployVariableValidator deployVariableValidator) {
+            DeployVariableValidator deployVariableValidator,
+            OpenApiUtil openApiUtil) {
         this.registerServiceStorage = registerServiceStorage;
         this.deployServiceStorage = deployServiceStorage;
         this.deployResourceStorage = deployResourceStorage;
         this.deployVariableValidator = deployVariableValidator;
+        this.openApiUtil = openApiUtil;
     }
 
     @Override
@@ -386,7 +390,7 @@ public class OrchestratorService implements ApplicationListener<ApplicationEvent
         if (file.exists()) {
             return "http://localhost:8080/openapi/" + uuid + ".html";
         } else {
-           return OpenApiUtil.updateServiceApi(registerService);
+            return openApiUtil.creatServiceApi(registerService);
         }
     }
 
@@ -395,8 +399,9 @@ public class OrchestratorService implements ApplicationListener<ApplicationEvent
      *
      * @param id ID of registered service.
      */
+    @Async("taskExecutor")
     public void deleteOpenApi(String id) {
-        OpenApiUtil.deleteServiceApi(id);
+        openApiUtil.deleteServiceApi(id);
     }
 
     /**
@@ -404,6 +409,7 @@ public class OrchestratorService implements ApplicationListener<ApplicationEvent
      *
      * @param id ID of registered service.
      */
+    @Async("taskExecutor")
     public void updateOpenApi(String id) {
         UUID uuid = UUID.fromString(id);
         RegisterServiceEntity registerService = registerServiceStorage.getRegisterServiceById(uuid);
@@ -411,7 +417,7 @@ public class OrchestratorService implements ApplicationListener<ApplicationEvent
             throw new IllegalArgumentException(String.format("Registered service with id %s not "
                     + "existed.", id));
         }
-        OpenApiUtil.updateServiceApi(registerService);
+        openApiUtil.updateServiceApi(registerService);
     }
 
 }

@@ -419,8 +419,8 @@ public class OrchestratorApi {
      * @param id id of registered service.
      * @return response
      */
-    @Tag(name = "Service", description = "APIs to get openapi of service deploy context")
-    @GetMapping(value = "/service/openapi/{id}", produces = MediaType.APPLICATION_JSON_VALUE)
+    @Tag(name = "Service Vendor", description = "APIs to get openapi of service deploy context")
+    @GetMapping(value = "/register/openapi/{id}", produces = MediaType.APPLICATION_JSON_VALUE)
     @ResponseStatus(HttpStatus.OK)
     public String openApi(@PathVariable("id") String id) {
         log.info("Get openapi url of registered service with id {}", id);

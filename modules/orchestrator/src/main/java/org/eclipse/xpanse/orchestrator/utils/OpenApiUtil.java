@@ -6,229 +6,244 @@
 
 package org.eclipse.xpanse.orchestrator.utils;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.StringUtils;
 import org.eclipse.xpanse.modules.database.register.RegisterServiceEntity;
-import org.eclipse.xpanse.modules.models.enums.DeployVariableType;
 import org.eclipse.xpanse.modules.models.resource.DeployVariable;
+import org.eclipse.xpanse.modules.models.utils.DeployVariableValidator;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
 
 /**
  * OpenApiUtil.
  */
 @Slf4j
+@Component
 public class OpenApiUtil {
+
+    private final DeployVariableValidator deployVariableValidator;
+
+    @Autowired
+    public OpenApiUtil(DeployVariableValidator deployVariableValidator) {
+        this.deployVariableValidator = deployVariableValidator;
+    }
 
     /**
      * update OpenApi for registered service .
      *
      * @param registerService Registered services.
      */
-    public static String updateServiceApi(RegisterServiceEntity registerService) {
+    public void updateServiceApi(RegisterServiceEntity registerService) {
         String rootPath = System.getProperty("user.dir");
         File folder = new File(rootPath + "/openapi");
         File file = new File(folder, registerService.getId() + ".html");
         if (file.exists()) {
             file.delete();
         }
-        List<DeployVariable> context = registerService.getOcl().getDeployment().getContext();
-        Set<String> requiredSet = new HashSet<>();
-        Map<String, Map<String, String>> propertiesMap = new HashMap<>();
+        creatServiceApi(registerService);
+    }
 
-        for (DeployVariable deployVariable : context) {
-            Map map = new HashMap();
-            //mandatory  Verify whether it is a required parameter
-            if (deployVariable.getMandatory()) {
-                requiredSet.add(deployVariable.getName());
-            }
-            // Parse validator content
-            if (!Objects.isNull(deployVariable.getValidator())) {
-                map.put("type", deployVariable.getType().toValue());
-                map.put("description", deployVariable.getDescription());
-                map.put("example", deployVariable.getValue());
-                if (deployVariable.getType().equals(DeployVariableType.STRING)) {
-                    String[] validArray = deployVariable.getValidator().split("\\|");
-                    for (String v : validArray) {
-                        String[] keyValue = v.split("=", 2);
-                        if (StringUtils.contains(keyValue[0], "Length")) {
-                            try {
-                                Integer value = Integer.parseInt(keyValue[1]);
-                                map.put(keyValue[0], value.toString());
-                                map.put("isValidator", "true");
-                            } catch (NumberFormatException e) {
-                                e.printStackTrace();
-                            }
-                        }
-                    }
-                }
-                if (deployVariable.getType().equals(DeployVariableType.NUMBER)) {
-                    String[] validArray = deployVariable.getValidator().split("\\|");
-                    for (String v : validArray) {
-                        String[] keyValue = v.split("=", 2);
-                        if (StringUtils.contains(keyValue[0], "mum")) {
-                            try {
-                                Integer value = Integer.parseInt(keyValue[1]);
-                                map.put(keyValue[0], value.toString());
-                            } catch (NumberFormatException e) {
-                                e.printStackTrace();
-                            }
-                        }
-                    }
-                }
-                propertiesMap.put(deployVariable.getName(), map);
-            } else {
-                map.put("type", deployVariable.getType().toValue());
-                map.put("description", deployVariable.getDescription());
-                map.put("example", deployVariable.getValue());
-                propertiesMap.put(deployVariable.getName(), map);
-            }
+    /**
+     * create OpenApi for registered service .
+     *
+     * @param registerService Registered services.
+     */
+    public String creatServiceApi(RegisterServiceEntity registerService) {
+        List<DeployVariable> deployVariables = registerService.getOcl().getDeployment()
+                .getContext();
+        ObjectMapper mapper = new ObjectMapper();
+        mapper.setSerializationInclusion(JsonInclude.Include.NON_NULL);
+        String propertiesStr = null;
+        String requiredStr = null;
+        try {
+            propertiesStr =
+                    mapper.writeValueAsString(
+                            deployVariableValidator.getVariableApiInfoMap(deployVariables)).replace(
+                            "\"[", "[").replace("]\"", "]").replace("\\", "").replace("'", "");
+            requiredStr = mapper.writeValueAsString(
+                    deployVariableValidator.getRequiredKeySet(deployVariables));
+        } catch (JsonProcessingException e) {
+            log.error("Failed to write value as string.", e);
         }
-        StringBuilder strPro = new StringBuilder();
-        for (String key : propertiesMap.keySet()) {
-            Map<String, String> stringMap = propertiesMap.get(key);
-            strPro.append("        ").append(key).append(":").append("\n");
-            strPro.append("         ").append("type:").append(" ").append(stringMap.get(
-                    "type")).append(
-                    "\n");
-            strPro.append("         ").append("description:").append(" ").append(stringMap.get(
-                    "description")).append(
-                    "\n");
-            strPro.append("         ").append("example:").append(" ").append(stringMap.get(
-                    "example")).append(
-                    "\n");
-            if (stringMap.get("type").equals("string") && !Objects.isNull(stringMap.get(
-                    "isValidator"))) {
-                strPro.append("         ").append("minLength:").append(" ").append(stringMap.get(
-                        "minLength")).append(
-                        "\n");
-                strPro.append("         ").append("maxLength:").append(" ").append(stringMap.get(
-                        "maxLength")).append(
-                        "\n");
-            }
-            if (stringMap.get("type").equals("number")) {
-                strPro.append("         ").append("minimum:").append(" ").append(stringMap.get(
-                        "minimum")).append(
-                        "\n");
-                strPro.append("         ").append("maximum:").append(" ").append(stringMap.get(
-                        "maximum")).append(
-                        "\n");
-            }
-        }
-
-        StringBuilder strReq = new StringBuilder();
-        for (String a : requiredSet) {
-            strReq.append("        ").append("-").append(" ").append(a).append("\n");
-        }
-        String serviceApi = String.format("openapi: 3.0.1\n"
-                + "info:\n"
-                + "  title: OpenAPI definition\n"
-                + "  version: v0\n"
-                + "servers:\n"
-                + "  - url: http://localhost:8080\n"
-                + "    description: Generated server url\n"
-                + "paths:\n"
-                + "  /xpanse/service:\n"
-                + "    post:\n"
-                + "      tags:\n"
-                + "        - Service\n"
-                + "      operationId: start\n"
-                + "      requestBody:\n"
-                + "        content:\n"
-                + "          application/json:\n"
-                + "            schema:\n"
-                + "              $ref: '#/components/schemas/CreateRequest'\n"
-                + "        required: true\n"
-                + "      responses:\n"
-                + "        '202':\n"
-                + "          description: Accepted\n"
-                + "          content:\n"
-                + "            '*/*':\n"
-                + "              schema:\n"
-                + "                $ref: '#/components/schemas/Response'\n"
-                + "        '400':\n"
-                + "          description: Bad Request\n"
-                + "          content:\n"
-                + "            '*/*':\n"
-                + "              schema:\n"
-                + "                $ref: '#/components/schemas/Response'\n"
-                + "        '404':\n"
-                + "          description: Not Found\n"
-                + "          content:\n"
-                + "            '*/*':\n"
-                + "              schema:\n"
-                + "                $ref: '#/components/schemas/Response'\n"
-                + "        '500':\n"
-                + "          description: Internal Server Error\n"
-                + "          content:\n"
-                + "            '*/*':\n"
-                + "              schema:\n"
-                + "                $ref: '#/components/schemas/Response'\n"
-                + "components:\n"
-                + "  schemas:\n"
-                + "    Response:\n"
-                + "      required:\n"
-                + "        - code\n"
-                + "        - message\n"
-                + "        - success\n"
-                + "      type: object\n"
-                + "      properties:\n"
-                + "        code:\n"
-                + "          type: string\n"
-                + "          description: The result code of response.\n"
-                + "        message:\n"
-                + "          type: string\n"
-                + "          description: The result message of response.\n"
-                + "        success:\n"
-                + "          type: boolean\n"
-                + "          description: The success boolean of response.\n"
-                + "        data:\n"
-                + "          type: object\n"
-                + "          description: The result data of response.\n"
-                + "    property:\n"
-                + "      required:\n"
-                + "%s\n"
-                + "      type: object\n"
-                + "      properties:\n"
-                + "%s\n"
-                + "    CreateRequest:\n"
-                + "      required:\n"
-                + "        - csp\n"
-                + "        - flavor\n"
-                + "        - name\n"
-                + "        - version\n"
-                + "      type: object\n"
-                + "      properties:\n"
-                + "        name:\n"
-                + "          type: string\n"
-                + "        version:\n"
-                + "          type: string\n"
-                + "        csp:\n"
-                + "          type: string\n"
-                + "          enum:\n"
-                + "            - aws\n"
-                + "            - azure\n"
-                + "            - alibaba\n"
-                + "            - huawei\n"
-                + "            - openstack\n"
-                + "        flavor:\n"
-                + "          type: string\n"
-                + "        property:\n"
-                + "          $ref: '#/components/schemas/property'\n", strReq, strPro);
+        String apiJson = String.format("{\n"
+                + "    \"openapi\": \"3.0.1\",\n"
+                + "    \"info\": {\n"
+                + "      \"title\": \"OpenAPI definition\",\n"
+                + "      \"version\": \"v0\"\n"
+                + "    },\n"
+                + "    \"servers\": [\n"
+                + "      {\n"
+                + "        \"url\": \"http://localhost:8080\",\n"
+                + "        \"description\": \"Generated server url\"\n"
+                + "      }\n"
+                + "    ],\n"
+                + "    \"paths\": {\n"
+                + "      \"/xpanse/service\": {\n"
+                + "        \"post\": {\n"
+                + "          \"tags\": [\n"
+                + "            \"Service\"\n"
+                + "          ],\n"
+                + "          \"operationId\": \"start\",\n"
+                + "          \"requestBody\": {\n"
+                + "            \"content\": {\n"
+                + "              \"application/json\": {\n"
+                + "                \"schema\": {\n"
+                + "                  \"$ref\": \"#/components/schemas/CreateRequest\"\n"
+                + "                }\n"
+                + "              }\n"
+                + "            },\n"
+                + "            \"required\": true\n"
+                + "          },\n"
+                + "          \"responses\": {\n"
+                + "            \"202\": {\n"
+                + "              \"description\": \"Accepted\",\n"
+                + "              \"content\": {\n"
+                + "                \"*/*\": {\n"
+                + "                  \"schema\": {\n"
+                + "                    \"type\": \"string\",\n"
+                + "                    \"format\": \"uuid\"\n"
+                + "                  }\n"
+                + "                }\n"
+                + "              }\n"
+                + "            },\n"
+                + "            \"400\": {\n"
+                + "              \"description\": \"Bad Request\",\n"
+                + "              \"content\": {\n"
+                + "                \"*/*\": {\n"
+                + "                  \"schema\": {\n"
+                + "                    \"$ref\": \"#/components/schemas/Response\"\n"
+                + "                  }\n"
+                + "                }\n"
+                + "              }\n"
+                + "            },\n"
+                + "            \"404\": {\n"
+                + "              \"description\": \"Not Found\",\n"
+                + "              \"content\": {\n"
+                + "                \"*/*\": {\n"
+                + "                  \"schema\": {\n"
+                + "                    \"$ref\": \"#/components/schemas/Response\"\n"
+                + "                  }\n"
+                + "                }\n"
+                + "              }\n"
+                + "            },\n"
+                + "            \"500\": {\n"
+                + "              \"description\": \"Internal Server Error\",\n"
+                + "              \"content\": {\n"
+                + "                \"*/*\": {\n"
+                + "                  \"schema\": {\n"
+                + "                    \"$ref\": \"#/components/schemas/Response\"\n"
+                + "                  }\n"
+                + "                }\n"
+                + "              }\n"
+                + "            }\n"
+                + "          }\n"
+                + "        }\n"
+                + "      }\n"
+                + "    },\n"
+                + "    \"components\": {\n"
+                + "      \"schemas\": {\n"
+                + "        \"Response\": {\n"
+                + "          \"required\": [\n"
+                + "            \"code\",\n"
+                + "            \"message\",\n"
+                + "            \"success\"\n"
+                + "          ],\n"
+                + "          \"type\": \"object\",\n"
+                + "          \"properties\": {\n"
+                + "            \"code\": {\n"
+                + "              \"type\": \"string\",\n"
+                + "              \"description\": \"The result code of response.\"\n"
+                + "            },\n"
+                + "            \"message\": {\n"
+                + "              \"type\": \"string\",\n"
+                + "              \"description\": \"The result message of response.\"\n"
+                + "            },\n"
+                + "            \"success\": {\n"
+                + "              \"type\": \"boolean\",\n"
+                + "              \"description\": \"The success boolean of response.\"\n"
+                + "            }\n"
+                + "          }\n"
+                + "        },\n"
+                + "        \"property\": {\n"
+                + "          \"required\": %s,\n"
+                + "          \"type\": \"object\",\n"
+                + "          \"properties\": %s\n"
+                + "        },\n"
+                + "        \"CreateRequest\": {\n"
+                + "          \"required\": [\n"
+                + "            \"category\",\n"
+                + "            \"csp\",\n"
+                + "            \"flavor\",\n"
+                + "            \"name\",\n"
+                + "            \"region\",\n"
+                + "            \"version\"\n"
+                + "          ],\n"
+                + "          \"type\": \"object\",\n"
+                + "          \"properties\": {\n"
+                + "            \"category\": {\n"
+                + "              \"type\": \"string\",\n"
+                + "              \"description\": \"The category of the service\",\n"
+                + "              \"enum\": [\n"
+                + "                \"ai\",\n"
+                + "                \"compute\",\n"
+                + "                \"container\",\n"
+                + "                \"storage\",\n"
+                + "                \"network\",\n"
+                + "                \"database\",\n"
+                + "                \"media_service\",\n"
+                + "                \"security\",\n"
+                + "                \"middleware\",\n"
+                + "                \"others\"\n"
+                + "              ]\n"
+                + "            },\n"
+                + "            \"name\": {\n"
+                + "              \"type\": \"string\",\n"
+                + "              \"description\": \"The name of the service\"\n"
+                + "            },\n"
+                + "            \"version\": {\n"
+                + "              \"type\": \"string\",\n"
+                + "              \"description\": \"The version of service\"\n"
+                + "            },\n"
+                + "            \"region\": {\n"
+                + "              \"type\": \"string\",\n"
+                + "              \"description\": \"The region of the provider.\"\n"
+                + "            },\n"
+                + "            \"csp\": {\n"
+                + "              \"type\": \"string\",\n"
+                + "              \"description\": \"The csp of the Service.\",\n"
+                + "              \"enum\": [\n"
+                + "                \"aws\",\n"
+                + "                \"azure\",\n"
+                + "                \"alibaba\",\n"
+                + "                \"huawei\",\n"
+                + "                \"openstack\"\n"
+                + "              ]\n"
+                + "            },\n"
+                + "            \"flavor\": {\n"
+                + "              \"type\": \"string\",\n"
+                + "              \"description\": \"The flavor of the Service.\"\n"
+                + "            },\n"
+                + "            \"property\": {\n"
+                + "              \"$ref\": \"#/components/schemas/property\"\n"
+                + "            }\n"
+                + "          }\n"
+                + "        }\n"
+                + "      }\n"
+                + "    }\n"
+                + "  }", requiredStr, propertiesStr);
         String yamlFileName = String.format("%s" + ".yaml", registerService.getId());
         File openapi = new File("openapi");
         openapi.mkdir();
         try {
             try (FileWriter apiWriter =
                     new FileWriter("./openapi" + File.separator + yamlFileName)) {
-                apiWriter.write(serviceApi);
+                apiWriter.write(apiJson);
             }
             String comm = "java -jar ./lib/openapi-generator-cli.jar generate -i "
                     + "./openapi/" + yamlFileName + " -g "
@@ -244,11 +259,11 @@ public class OpenApiUtil {
             File yamlFile = new File(
                     "./openapi" + File.separator + yamlFileName);
             yamlFile.delete();
-            log.info("serviceApi update success.");
+            log.info("serviceApi create success.");
             return "http://localhost:8080/openapi/" + registerService.getId() + ".html";
         } catch (IOException | InterruptedException ex) {
-            log.error("serviceApi update failed.", ex);
-            throw new RuntimeException("serviceApi update failed.", ex);
+            log.error("serviceApi create failed.", ex);
+            throw new RuntimeException("serviceApi create failed.", ex);
         }
     }
 
@@ -257,7 +272,7 @@ public class OpenApiUtil {
      *
      * @param id ID of registered service.
      */
-    public static void deleteServiceApi(String id) {
+    public void deleteServiceApi(String id) {
         File file = new File("openapi/" + id + ".html");
         file.delete();
     }
