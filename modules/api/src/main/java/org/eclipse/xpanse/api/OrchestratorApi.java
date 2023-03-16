@@ -129,6 +129,7 @@ public class OrchestratorApi {
         String successMsg = String.format(
                 "Update registered service with id %s success.", id);
         log.info(successMsg);
+        this.orchestratorService.updateOpenApi(id);
         return Response.successResponse(successMsg);
     }
 
@@ -183,6 +184,7 @@ public class OrchestratorApi {
         String successMsg = String.format(
                 "Update registered service %s with Url %s", id, oclLocation);
         log.info(successMsg);
+        this.orchestratorService.updateOpenApi(id);
         return Response.successResponse(successMsg);
     }
 
@@ -206,6 +208,7 @@ public class OrchestratorApi {
         String successMsg = String.format(
                 "Unregister registered service using id %s success.", id);
         log.info(successMsg);
+        this.orchestratorService.deleteOpenApi(id);
         return Response.successResponse(successMsg);
     }
 
@@ -416,8 +419,8 @@ public class OrchestratorApi {
      * @param id id of registered service.
      * @return response
      */
-    @Tag(name = "Service", description = "APIs to get openapi of service deploy context")
-    @GetMapping(value = "/service/openapi/{id}", produces = MediaType.APPLICATION_JSON_VALUE)
+    @Tag(name = "Service Vendor", description = "APIs to get openapi of service deploy context")
+    @GetMapping(value = "/register/openapi/{id}", produces = MediaType.APPLICATION_JSON_VALUE)
     @ResponseStatus(HttpStatus.OK)
     public String openApi(@PathVariable("id") String id) {
         log.info("Get openapi url of registered service with id {}", id);
