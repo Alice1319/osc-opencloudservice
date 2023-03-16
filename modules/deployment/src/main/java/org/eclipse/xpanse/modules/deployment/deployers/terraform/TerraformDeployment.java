@@ -68,7 +68,6 @@ public class TerraformDeployment implements Deployment {
         return deployResult;
     }
 
-
     @Override
     public DeployResult destroy(DeployTask task) {
         String workspace = getWorkspacePath(task.getId().toString());
@@ -78,6 +77,11 @@ public class TerraformDeployment implements Deployment {
         result.setId(task.getId());
         executor.destroy();
         result.setState(TerraformExecState.DESTROY_SUCCESS);
+        if (executor.destroy()) {
+            result.setState(TerraformExecState.DESTROY_SUCCESS);
+        } else {
+            result.setState(TerraformExecState.DESTROY_FAILED);
+        }
         return result;
     }
 

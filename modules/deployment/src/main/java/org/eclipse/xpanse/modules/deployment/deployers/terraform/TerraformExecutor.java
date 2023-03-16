@@ -131,19 +131,20 @@ public class TerraformExecutor {
     /**
      * Destroy resource of the service.
      */
-    public void destroy() {
+    public boolean destroy() {
         if (!tfInit()) {
             log.error("TFExecutor.tfInit failed.");
-            throw new TerraformExecutorException("TFExecutor.tfInit failed.");
+            return false;
         }
         if (!tfPlan()) {
             log.error("TFExecutor.tfPlan failed.");
-            throw new TerraformExecutorException("TFExecutor.tfPlan failed.");
+            return false;
         }
         if (!tfDestroy()) {
             log.error("TFExecutor.tfDestroy failed.");
-            throw new TerraformExecutorException("TFExecutor.tfDestroy failed.");
+            return false;
         }
+        return true;
     }
 
     /**
