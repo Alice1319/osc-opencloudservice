@@ -6,6 +6,7 @@
 
 package org.eclipse.xpanse.orchestrator;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
@@ -35,6 +36,7 @@ import org.eclipse.xpanse.modules.monitor.Monitor;
 import org.eclipse.xpanse.orchestrator.register.RegisterServiceStorage;
 import org.eclipse.xpanse.orchestrator.service.DeployResourceStorage;
 import org.eclipse.xpanse.orchestrator.service.DeployServiceStorage;
+import org.eclipse.xpanse.orchestrator.utils.OpenApiUtil;
 import org.slf4j.MDC;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -68,6 +70,8 @@ public class OrchestratorService implements ApplicationListener<ApplicationEvent
 
     private final DeployVariableValidator deployVariableValidator;
 
+    private final OpenApiUtil openApiUtil;
+
     @Getter
     private final List<Deployment> deployers = new ArrayList<>();
     @Getter
@@ -81,11 +85,13 @@ public class OrchestratorService implements ApplicationListener<ApplicationEvent
     OrchestratorService(RegisterServiceStorage registerServiceStorage,
             DeployServiceStorage deployServiceStorage,
             DeployResourceStorage deployResourceStorage,
-            DeployVariableValidator deployVariableValidator) {
+            DeployVariableValidator deployVariableValidator,
+            OpenApiUtil openApiUtil) {
         this.registerServiceStorage = registerServiceStorage;
         this.deployServiceStorage = deployServiceStorage;
         this.deployResourceStorage = deployResourceStorage;
         this.deployVariableValidator = deployVariableValidator;
+        this.openApiUtil = openApiUtil;
     }
 
     @Override
@@ -378,7 +384,40 @@ public class OrchestratorService implements ApplicationListener<ApplicationEvent
                     + "existed.", id));
         }
         // TODO find the path of swagger-ui.html of the registered by id or generate swagger-ui.html
-        return null;
+        String rootPath = System.getProperty("user.dir");
+        File folder = new File(rootPath + "/openapi");
+        File file = new File(folder, uuid + ".html");
+        if (file.exists()) {
+            return "http://localhost:8080/openapi/" + uuid + ".html";
+        } else {
+            return openApiUtil.creatServiceApi(registerService);
+        }
+    }
+
+    /**
+     * delete OpenApi for registered service using the ID.
+     *
+     * @param id ID of registered service.
+     */
+    @Async("taskExecutor")
+    public void deleteOpenApi(String id) {
+        openApiUtil.deleteServiceApi(id);
+    }
+
+    /**
+     * update OpenApi for registered service using the ID.
+     *
+     * @param id ID of registered service.
+     */
+    @Async("taskExecutor")
+    public void updateOpenApi(String id) {
+        UUID uuid = UUID.fromString(id);
+        RegisterServiceEntity registerService = registerServiceStorage.getRegisterServiceById(uuid);
+        if (Objects.isNull(registerService) || Objects.isNull(registerService.getOcl())) {
+            throw new IllegalArgumentException(String.format("Registered service with id %s not "
+                    + "existed.", id));
+        }
+        openApiUtil.updateServiceApi(registerService);
     }
 
 }
